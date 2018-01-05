@@ -1,0 +1,752 @@
+---
+title: "Statistical supplement: Effect of sensory deprivation on LMA, PA, and branching structure"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+#Explanation of the model
+
+*Overview*: 
+
+This analysis tested the hypothesis that sensory deprivation (plucking whiskers) affected the distribution of leptomeningeal anastomoses (LMA), penetrating arterioles (PA) and the vessel branching structure. Mice received either the sensory-deprivation (plucked) or control (sham) treatment. The LMA/PA/branch count from 5 cortical regions (Auditory, Barrel, forelimb, hindlimb, Visual) was measured. The size (mm^2^) of each cortical region was measured using cytochrome oxidase stains. 
+
+*Approach*:
+We chose to examine the effect of sensory deprivation on LMA/PA/branch counts using a generalized linear model for 2 reasons:
+
+1. Inter-dependence of count data: Since counts were taken from multiple cortical regions in the same mouse, they cannot be considered to be independent of each other. This dependence of the data due to the nested structure violates the assumptions of basic tests such as ANOVA/t-tests, resulting in an underestimation of the residual variance and inflation of Type 1 error. Dependence of variance on the grouping of data is handled well by general linear models, which can include fixed and random effects.
+
+2. Non-normality of errors: The LMA/PA count within each cortical region was not well represented by a normal distribution since counts are bounded by 0. Rather the data are likely to follow a Poisson or Negative Binomial distribution. A generalized linear model, which is an extension of the general linear model, can handle non-normal residuals.
+
+The LMA/PA/branch counts can be conceptualized as a series of Bernoulli trials, where each trial evaluates the presence (success) or absence (failure) of an LMA/PA/branch within a given trial area. However, each cortical region was a different size and spanned a different number of "Bernoulli trial areas".
+
+To account for the nested data structure, non-normal distribution, and varying size of cortical regions. We used a generalized linear model (GLIM) based on a Poisson distribution with an offset term which models the logarithm of the count data as a linear combination of a set of independent variables:
+
+(@GLIM1) $$log(C) = X\beta + Zu + \epsilon$$
+
+where $C$ was the LMA/PA count, $X$ and $Z$ were matrices of independent variables, $\beta$ was a vector of the fixed-effects, $u$ was a vector of the random effects, and $\epsilon$ was a vector of error.
+
+At the lowest level of the nested data, the main factor influencing count data was assumed to be the cortical region ($R$):
+
+(@GLIM2) $$log(C)=\beta_0+R\beta_1 + \epsilon$$
+
+where $\beta_0$ and $\beta_1$ denote columns of the matrix $\beta$. However, the count also scales with the size of the cortical area. This can be corrected by converting the count into a rate (count per unit area):
+
+(@GLIM3) $$log(\frac{C}{A}) = \beta'_0 + \beta'_1 R + \epsilon$$
+
+where $A$ was a vector containing the area corresponding to each count in $C$. 
+
+Rearranging:
+
+(@GLIM4) $$log(C) = \beta'_0 + \beta'_1 R + log(A) + \epsilon$$
+
+The mean number of vessels ($\beta'_0$) for a given animal may be affected by sensory-deprivation $S$ (a fixed effect), Age ($Y$), Sex ($G$), and by the variation in counts due to differences between mice $M$ (a random effect):
+
+(@GLIM5) $$\beta'_0 = \gamma_1 S + \gamma_2 Y + \gamma_3 G + u_1 M$$
+
+where $\gamma_1$ was the fixed effects of sensory deprivation ($S$), $\gamma_2$ was the fixed-effect of age ($Y$), $\gamma_3$ was the fixed effect of sex ($G$), and $u_1$ was the random effect of an individual mice on the vessel mean. $S$ and $G$ were categorical variables, which was assigned a dummy variable (0 = sensory deprivation, 1 = sham; 0 = Female, 1 = Male). We also considered that the effect of age may be different among treatments:
+
+(@GLIM6) $$\gamma_2=\alpha_0 + \alpha_1 S$$
+
+Additionally, since the whiskers were plucked we examined whether sensory deprivation impacted counts within cortical regions
+
+(@GLIM7) $$\beta'_1 = \gamma_4 + \gamma_5 S$$
+
+where $\gamma_4$ was the fixed-effect of the cortical region, and $\gamma_5$ was the fixed-effect of the interaction (*) between sensory deprivation and cortical region. Combining equations (4) - (7), our final model was:
+
+(@GLIM8) $$log(C) = \gamma_1 S + \alpha_0 Y + \alpha_1(Y*S) + \gamma_3 G + \gamma_4 R + \gamma_5 (S*R) + u_1M + log(A) + \epsilon$$
+
+
+#Setup
+##Load Packages
+```{r setup}
+library(tidyverse) # suite of packages for plotting and cleaning
+library(lme4) # for fitting the general linear model
+library(multcomp) # for Tukey HSD test
+library(knitr) # for publication of markdown
+```
+
+##Load Data
+```{r}
+BranchData = read.table("../Data/OFFSHOOT_29Sep2017_004858.txt", header=T, sep="\t")
+PAData = read.table("../Data/LMA_PA_Data_Appended.txt", header = T, sep = "\t")
+```
+
+##Clean Data
+```{r}
+# Recode the area variable
+BranchClean <- BranchData %>%
+  mutate(Area = recode(Area, AUD = "A", BF = "BF", FORE = "FP", HIND = "HP", VIS = "V"))
+
+# Rename fieldnames of the data frames to match
+colnames(BranchClean) <- c("Animal","Treatment","Region","nBranches","fractionOfBranches",
+                           "AvgNumVertInBranch","AvgNumEdgesInBranch")
+
+# PAData: Pipe1 - convert the NumLMA to numeric
+#         Pipe2 - convert the NumPA to numeric
+#         Pipe3 - recode the regions
+PAClean <- PAData %>%
+  mutate(NumLMA = as.numeric(levels(NumLMA)[NumLMA])) %>%
+  mutate(NumPA = as.numeric(levels(NumPA)[NumPA])) %>%
+  mutate(Region = recode(Region, Auditory = "A", Barrels = "BF", Forepaw = "FP",
+                       Hindpaw = "HP", Visual = "V"))
+
+# Merge the two data frames, Entries in PAData without a corresponding entry 
+# in BranchClean will be entered as NaN
+# Pipe 1: Convert "Animal" variable to a factor
+# Pipe 2: Create a new variable containing the density of LMA per mm^2
+# Pipe 3: Create a new variable containing the density of PA per mm^2
+Data <- as.tibble(left_join(PAClean,BranchClean) %>%
+  mutate(Animal = factor(Animal)) %>%
+  mutate(LMADensity = NumLMA/Area) %>%
+  mutate(PADensity = NumPA/Area))
+
+
+# Pipe 1: Convert the "Animal" field from names to numbers
+# Pipe 2: rescale the age variable
+Data <- Data %>%
+  mutate(Animal = factor(Data$Animal, level=levels(Data$Animal), 
+                         labels=c(1:nlevels(Data$Animal)))) %>%
+  mutate(Age_scaled = scale(Age, center = T, scale = T))
+
+# Clean data for figures
+Data.Figs.RegionFilt <- dplyr::filter(Data, Region == "BF" | Region == "FP" | Region == "HP")
+Data.Figs.Num <- mutate(aggregate(cbind(NumLMA, NumPA, Area) ~ Animal, 
+                                  data = Data.Figs.RegionFilt, sum, na.action = na.pass))
+Data.Figs.Fctrs <- dplyr::filter(Data.Figs.RegionFilt, Region == "BF") %>%
+  dplyr::select(Animal, Sex, Age, Age_scaled, Treatment) %>%
+  dplyr::mutate(Age_scaled = Age_scaled[,1])
+Data.Figs <- left_join(Data.Figs.Num, Data.Figs.Fctrs)
+Data.Figs.Complete = Data.Figs[complete.cases(Data.Figs),] %>%
+  mutate(LMADensity = NumLMA/Area) %>%
+  mutate(PADensity = NumPA/Area)
+```
+
+##Plot the number of LMAs vs. PAs
+```{r, result = 'asis'}
+# Fit the points
+LMA.Model.PA.All = lm(data = Data.Figs.Complete, 
+                           LMADensity ~ PADensity, na.action = na.omit)
+Data.Figs.Plucked <- dplyr::filter(Data.Figs.Complete, Treatment == "Plucked")
+LMA.Model.PA.Plucked = lm(data = Data.Figs.Plucked,
+                           LMADensity ~ PADensity, na.action = na.omit)
+Data.Figs.Sham <- dplyr::filter(Data.Figs.Complete, Treatment == "Sham")
+LMA.Model.PA.Sham = lm(data = Data.Figs.Sham,
+                        LMADensity ~ PADensity, na.action = na.omit)
+
+# Summarize results as a table
+LMA.Table.PA <- tibble(
+  Treatment = c("All","Plucked","Sham"),
+  Slope = c(summary(LMA.Model.PA.All)$coefficients[2,1],
+            summary(LMA.Model.PA.Plucked)$coefficients[2,1],
+            summary(LMA.Model.PA.Sham)$coefficients[2,1]),
+  tStat = c(summary(LMA.Model.PA.All)$coefficients[2,3],
+            summary(LMA.Model.PA.Plucked)$coefficients[2,3],
+            summary(LMA.Model.PA.Sham)$coefficients[2,3]),
+  pVal = c(summary(LMA.Model.PA.All)$coefficients[2,4],
+           summary(LMA.Model.PA.Plucked)$coefficients[2,4],
+           summary(LMA.Model.PA.Sham)$coefficients[2,4])
+  )
+kable(LMA.Table.PA)
+
+# Plot
+ggplot(data = Data.Figs.Complete, mapping = aes(x = PADensity, y = LMADensity, color = Treatment)) +
+  geom_point() +
+  scale_color_manual(values = c("orange","blue")) +
+  geom_line(mapping = aes(x = PADensity, y = fitted(LMA.Model.PA.All)), 
+            color = "black", size = 1) +
+  geom_line(Data.Figs.Plucked, mapping = aes(x = PADensity, y = fitted(LMA.Model.PA.Plucked)), 
+            color = "orange", size = 1) +
+  geom_line(Data.Figs.Sham, mapping = aes(x = PADensity, y = fitted(LMA.Model.PA.Sham)), 
+            color = "blue", size = 1) +
+  labs(x = "PA Density (PA/mm^2)", y = "LMA Density (LMA/mm^2)", 
+       title = "Density of PAs and LMAs in the BF, FP, HP") +
+  xlim(10,30) +
+  ylim(0,3) +
+  theme_bw()
+ggsave("NumPAvsNumLMA.eps")
+```
+
+
+# Effect of sensory deprivation on LMA count
+**Hypothesis**: Sensory deprivation (whisker plucking) alters the number LMA within individual cortical regions
+
+*Null hypothesis $(H_0)$*: Sensory deprivation DOES NOT affect number of LMAs in a cortical region.
+
+*Alternative hypothesis $(H_a)$*: Sensory deprivation DOES affect the number of LMAs in a cortical region.
+
+##Plot the distribution of LMA counts
+```{r}
+ggplot(data = Data, mapping = aes(x=NumLMA)) +
+  geom_histogram(bins = 15, na.rm = TRUE) +
+  theme_bw() + 
+  xlim(0,15) + 
+  labs(title = "Distribution of all LMA counts:", x = "LMA count", y = "Frequency")
+```
+
+##Plot the LMA *counts* by Region, Treatment, and Animal
+```{r}
+ggplot(data = Data, mapping = aes(x=Region, y=NumLMA, group = Animal, shape = Sex)) +
+  geom_point(na.rm = TRUE, mapping = aes(col = Animal), size = 4) + 
+  geom_line(na.rm = TRUE, mapping = aes(col = Animal), size = 1) +
+  facet_wrap(~Treatment, nrow = 1) +
+  labs(title = "LMA counts for each animal:", x = "Cortical region", y = "LMA count") +
+  guides(color = FALSE) +
+  theme_bw()
+```
+
+##Plot the LMA *density* by Region, Treatment, and Animal
+```{r}
+ggplot(data = Data, mapping = aes(x=Region, y=LMADensity, group = Animal, shape = Sex)) +
+  geom_point(na.rm = TRUE, mapping = aes(col = Animal), size = 4) + 
+  geom_line(na.rm = TRUE, mapping = aes(col = Animal), size = 1) +
+  facet_wrap(~Treatment, nrow = 1) +
+  labs(title = "LMA density for each animal:", x = "Cortical region", 
+       y = "LMA density (LMA*mm-2)") +
+  guides(color = FALSE) +
+  theme_bw()
+```
+
+##Plot the relationship between Age and total LMA count
+```{r, result='asis'}
+# Build models
+LMA.Model.Age.All = lm(data = Data.Figs.Complete, 
+                           LMADensity ~ Age_scaled, na.action = na.omit)
+Data.Figs.Plucked <- dplyr::filter(Data.Figs.Complete, Treatment == "Plucked")
+LMA.Model.Age.Plucked = lm(data = Data.Figs.Plucked,
+                           LMADensity ~ Age_scaled, na.action = na.omit)
+Data.Figs.Sham <- dplyr::filter(Data.Figs.Complete, Treatment == "Sham")
+LMA.Model.Age.Sham = lm(data = Data.Figs.Sham,
+                        LMADensity ~ Age_scaled, na.action = na.omit)
+
+# Summarize model results in table
+LMA.Table.Age <- tibble(
+  Treatment = c("All","Plucked","Sham"),
+  Slope = c(summary(LMA.Model.Age.All)$coefficients[2,1],
+            summary(LMA.Model.Age.Plucked)$coefficients[2,1],
+            summary(LMA.Model.Age.Sham)$coefficients[2,1]),
+  tStat = c(summary(LMA.Model.Age.All)$coefficients[2,3],
+            summary(LMA.Model.Age.Plucked)$coefficients[2,3],
+            summary(LMA.Model.Age.Sham)$coefficients[2,3]),
+  pVal = c(summary(LMA.Model.Age.All)$coefficients[2,4],
+           summary(LMA.Model.Age.Plucked)$coefficients[2,4],
+           summary(LMA.Model.Age.Sham)$coefficients[2,4])
+  )
+kable(LMA.Table.Age)
+
+# Plot
+ggplot(data = Data.Figs.Complete, mapping = aes(x = Age, y = LMADensity)) +
+  geom_point(mapping = aes(color = Treatment), size = 3) +
+  scale_color_manual(values = c("orange","blue")) +
+  geom_line(mapping = aes(x = Age, y = fitted(LMA.Model.Age.All)), 
+            color = "black", size = 1) +
+  geom_line(Data.Figs.Plucked, mapping = aes(x = Age, y = fitted(LMA.Model.Age.Plucked)),
+            color = "orange", size = 1) +
+  geom_line(Data.Figs.Sham, mapping = aes(x = Age, y = fitted(LMA.Model.Age.Sham)), 
+            color = "blue", size = 1) +
+  labs(x = "Age (days)", y = "LMA density", title = "Effect of age on Number of LMAs:") +
+  theme_bw()
+ggsave("EffectOfAgeOnNumberOfLMAs.eps")
+```
+
+##Model the LMA count
+```{r}
+LMA.Poisson.Full = glmer(NumLMA ~ 1 + Age_scaled + Sex + Treatment + Region  + 
+                           Treatment:Region + Age_scaled:Treatment + (1|Animal) + 
+                           offset(log(Area)),
+                         data = Data, family = poisson, 
+                         control = glmerControl(optimizer="bobyqa"), na.action = na.omit)
+LMA.Summary.Poisson.Full = summary(LMA.Poisson.Full)
+LMA.Summary.Poisson.Full
+```
+**Comment**: The fixed effects are compared to the intercept which is the log(mean) of the LMA count in auditory cortex for sensory deprived mice. The model summary suggested that cortical region is likely the only significant effect. We used maximum likelihood ratios to test the effects directly.
+
+##Perform likelihood ratio tests to test main and interaction effects:
+###Test the significance of Sex on the LMA counts
+```{r}
+LMA.Poisson.Reduced1 = glmer(NumLMA ~ 1 + Age_scaled + Treatment + Region  + 
+                               Treatment:Region + Age_scaled:Treatment + (1|Animal) + 
+                               offset(log(Area)), 
+                        data = Data, family = poisson, 
+                        control = glmerControl(optimizer="bobyqa"), na.action = na.omit)
+anova(LMA.Poisson.Full, LMA.Poisson.Reduced1)
+```
+**Comment:** the p-value (p=0.2368) indicated that the model was not significantly improved by inclusion of sex as a factor and there was no effect of sex on mean LMA counts.
+
+###Test the significance of Age on LMA counts
+```{r}
+LMA.Poisson.Reduced2 = glmer(NumLMA ~ 1 + Treatment + Region  + Treatment:Region + 
+                               (1|Animal) + offset(log(Area)), 
+                        data = Data, family = poisson, 
+                        control = glmerControl(optimizer="bobyqa"), na.action = na.omit)
+anova(LMA.Poisson.Reduced1, LMA.Poisson.Reduced2)
+```
+**Comment:** the p-value (p=0.6617) indicated that the model was not significantly improved by including age as a factor and there was no effect of age on mean LMA counts for all animals or for either treatment group. 
+
+###Test the significance of the effect of sensory deprivation on LMA counts within cortical regions
+```{r}
+LMA.Poisson.Reduced3 = glmer(NumLMA ~ 1 + Treatment + Region + (1|Animal) + 
+                                 offset(log(Area)), data = Data, 
+                                 family = poisson, 
+                                 control = glmerControl(optimizer="bobyqa"), 
+                                 na.action = na.omit)
+anova(LMA.Poisson.Reduced2, LMA.Poisson.Reduced3, test = "Chisq")
+```
+**Comment**: the p-value (p=0.196) indicated that the model was not significantly improved by including the interaction between Treatment and Region and that there was no differential, region-specific effect of the sensory deprivation.
+
+###Test the significance of the effect of sensory deprivation on LMA count
+```{r}
+LMA.Poisson.Reduced4 = glmer(NumLMA ~ 1 + Region + (1|Animal) + offset(log(Area)), 
+                               data = Data, family = poisson, 
+                               control = glmerControl(optimizer="bobyqa"), 
+                               na.action = na.omit)
+LMA.Summary.Poisson.Reduced4 = summary(LMA.Poisson.Reduced4)
+anova(LMA.Poisson.Reduced3, LMA.Poisson.Reduced4, test = "Chisq")
+```
+**Comment**: the p-value (p=0.697) indicated that the model was not significantly improved by including the overall effect of Treatment on the LMA count and that the sensory deprivation did not alter the number of LMAs.
+
+###Test the significance of the effect of cortical region on LMA count
+```{r}
+LMA.Poisson.Reduced5 = glmer(NumLMA ~ 1 + (1|Animal) + offset(log(Area)), 
+                         data = Data, family = poisson, 
+                         control = glmerControl(optimizer="bobyqa"), 
+                         na.action = na.omit)
+anova(LMA.Poisson.Reduced4, LMA.Poisson.Reduced5, test = "Chisq")
+```
+**Comment**: the p-value (p=1.83e-09) indicated that the model was signficantly improved by including the effect of cortical region on the LMA count and that LMA counts were different between regions.
+
+###Use Tukey's honest significance difference-test to test which regions are different.
+Tukey's HSD evaluated signficance based on a studentized distribution that corrects for multiple comparisons.
+```{r}
+LMA.PostHoc.Region = glht(LMA.Poisson.Reduced4, mcp(Region = "Tukey"))
+LMA.Summary.PostHoc.Region = summary(LMA.PostHoc.Region)
+(LMA.Summary.PostHoc.Region)
+
+# Extract the estimates for the significant results
+LMA.SigCoef.PostHoc.Region <- 
+  LMA.Summary.PostHoc.Region$test$coefficients[LMA.Summary.PostHoc.Region$test$pvalues < 0.05]
+
+# Extract the effect size for the signficant results
+LMA.SigZ.PostHoc.Region <- 
+  LMA.Summary.PostHoc.Region$test$tstat[LMA.Summary.PostHoc.Region$test$pvalues < 0.05]
+
+#Get the significant p-values
+LMA.SigP.PostHoc.Region <- 
+  LMA.Summary.PostHoc.Region$test$pvalues[LMA.Summary.PostHoc.Region$test$pvalues < 0.05]
+
+plot(LMA.PostHoc.Region, xlab = "Difference in log(mean) of LMA")
+```
+**Comment**: The Tukey-adjusted p-values indicated that the hindlimb, barrel, and visual cortices varied in their LMA counts.
+
+##Test model assumptions
+###Test assumption of Poisson distribution
+An assumption of the Poisson distribution was that the mean and variance of the error distribution was equal. The error was distributed according to $\chi^2$, where, by definition, the mean = degrees of freedom. Thus, the Poisson assumption can be tested by comparing the residual degrees of freedom (= mean residual) to the variance of the (studentized) residual ($rp$):
+
+(@resid) $$rp=\frac{actual-fitted}{\sqrt{fitted}}$$
+
+```{r}
+# Get the degrees of freedom for the residuals (rdf)
+rdf <- LMA.Summary.Poisson.Reduced4$AICtab[[5]]
+
+# Get the studentized residuals of the model
+rp <- residuals(LMA.Poisson.Reduced4,type="pearson")
+
+# Calculate the variance of the studentized residuals
+rp_var <- sum(rp^2)
+
+# Show the ratio of error variance, mean
+rat = rp_var/rdf
+
+# Get the probability (pval) that the variance > mean
+pval_over <- pchisq(rp_var, df = rdf, lower.tail = FALSE)
+pval_under <- pchisq(rp_var, df = rdf, lower.tail = TRUE) 
+
+# Summarize
+overdisp = c(Residual_Variance = rp_var, Ratio = rat, df = rdf, 
+             p_over = pval_over, p_under = pval_under)
+overdisp
+```
+
+####Plot the fitted values against the residuals
+```{r}
+# Calculate the studentized residuals
+Resids = data.frame(Mouse_Number = Data[complete.cases(Data$NumLMA),]$Animal, 
+                    Fitted_Value = fitted(LMA.Poisson.Reduced4), 
+                    Standardized_Resids = residuals(LMA.Poisson.Reduced4, type="pearson"))
+
+# Fit the plot with a line to test whether slope = 0
+Resids.Fitted = lm(Standardized_Resids~Fitted_Value, data = Resids)
+
+# Plot the studentized residual amplitude vs. the fitted value
+plot(LMA.Poisson.Reduced4)
+
+# Test the significance of the slope
+anova(Resids.Fitted)
+```
+**Interpretation:**
+The ratio $\frac{Var_{error}}{mean_{error}} = \frac{73.54}{85} = 0.865$ was not significantly greater than 1 (p=0.81). This indicated that the model was not overdispersed. Nor was it significantly less than 1 (p=0.19). This indicated that the assumption of a Poisson distribution was appropriate for these data. Similarly, there was no relationship between the fitted values and the residuals.
+
+##Summary of LMA count analysis:
+**These models indicated that sensory deprivation had no effect on the number LMAs overall or within any cortical area. The only significant factor in the LMA count was the cortical region.**
+
+#Effect of sensory deprivation on PA counts
+This analysis tests the hypothesis that sensory deprivation (plucking whiskers) affects the distribution of penetrating arterioles (PA).
+
+**Hypothesis**: Sensory deprivation (whisker plucking) alters the density of PA within individual cortical regions
+
+*Null hypothesis $(H_0)$*: Sensory deprivation DOES NOT affect the density of PAs in a cortical region.
+
+*Alternative hypothesis $(H_a)$*: Sensory deprivation DOES affect the density of PAs in a cortical region.
+
+##Plot the distribution of all PA counts
+```{r}
+ggplot(data = Data, mapping = aes(x=NumPA)) +
+  geom_histogram(bins = 30, na.rm = TRUE) +
+  theme_bw() + 
+  labs(title = "Distribution of all PA counts:", x = "PA count", y = "Frequency") +
+  xlim(0,120)
+```
+
+##Plot the PA *counts* by Region, Treatment, and Animal
+```{r}
+ggplot(data = Data, mapping = aes(x=Region, y=NumPA, group = Animal, shape = Sex)) +
+  geom_point(na.rm = TRUE, mapping = aes(col = Animal), size = 4) + 
+  geom_line(na.rm = TRUE, mapping = aes(col = Animal), size = 1) +
+  facet_wrap(~Treatment, nrow = 1) +
+  labs(title = "PA counts for each animal:", x = "Cortical region", y = "PA count") +
+  guides(color = FALSE) +
+  theme_bw()
+```
+
+##Plot the PA *density* by Region, Treatment, and Animal
+```{r}
+ggplot(data = Data, mapping = aes(x=Region, y=PADensity, group = Animal, shape = Sex)) +
+  geom_point(na.rm = TRUE, mapping = aes(col = Animal), size = 4) + 
+  geom_line(na.rm = TRUE, mapping = aes(col = Animal), size = 1) +
+  facet_wrap(~Treatment, nrow = 1) +
+  labs(title = "PA density for each animal:", x = "Cortical region", 
+       y = "PA density (PA*mm-2)") +
+  guides(color = FALSE) +
+  theme_bw()
+```
+
+##Plot the relationship between Age and total PA count
+```{r}
+# Build models
+PA.Model.Age.All = lm(data = Data.Figs.Complete, 
+                           PADensity ~ Age_scaled, na.action = na.omit)
+Data.Figs.Plucked <- dplyr::filter(Data.Figs.Complete, Treatment == "Plucked")
+PA.Model.Age.Plucked = lm(data = Data.Figs.Plucked,
+                           PADensity ~ Age_scaled, na.action = na.omit)
+Data.Figs.Sham <- dplyr::filter(Data.Figs.Complete, Treatment == "Sham")
+PA.Model.Age.Sham = lm(data = Data.Figs.Sham,
+                        PADensity ~ Age_scaled, na.action = na.omit)
+
+# Summarize model results in table
+PA.Table.Age <- tibble(
+  Treatment = c("All","Plucked","Sham"),
+  Slope = c(summary(PA.Model.Age.All)$coefficients[2,1],
+            summary(PA.Model.Age.Plucked)$coefficients[2,1],
+            summary(PA.Model.Age.Sham)$coefficients[2,1]),
+  tStat = c(summary(PA.Model.Age.All)$coefficients[2,3],
+            summary(PA.Model.Age.Plucked)$coefficients[2,3],
+            summary(PA.Model.Age.Sham)$coefficients[2,3]),
+  pVal = c(summary(PA.Model.Age.All)$coefficients[2,4],
+           summary(PA.Model.Age.Plucked)$coefficients[2,4],
+           summary(PA.Model.Age.Sham)$coefficients[2,4])
+  )
+kable(PA.Table.Age)
+
+# Plot
+ggplot(data = Data.Figs.Complete, mapping = aes(x = Age, y = PADensity)) +
+  geom_point(mapping = aes(color = Treatment), size = 3) +
+  scale_color_manual(values = c("orange","blue")) +
+  geom_line(mapping = aes(x = Age, y = fitted(PA.Model.Age.All)), 
+            color = "black", size = 1) +
+  geom_line(Data.Figs.Plucked, mapping = aes(x = Age, y = fitted(PA.Model.Age.Plucked)), 
+            color = "orange", size = 1) +
+  geom_line(Data.Figs.Sham, mapping = aes(x = Age, y = fitted(PA.Model.Age.Sham)), 
+            color = "blue", size = 1) +
+  labs(x = "Age (days)", y = "PA density", title = "Effect of age on PA density:") +
+  ylim(10, 30) +
+  theme_bw()
+ggsave("EffectOfAgeOnNumberOfPAs.eps")
+```
+
+##Model the PA counts
+```{r}
+PA.Poisson.Full = glmer(NumPA ~ 1 + Age_scaled + Sex + Treatment + Region  + 
+                          Treatment:Region + Age_scaled:Treatment + (1|Animal) + 
+                          offset(log(Area)), 
+                        data = Data, family = poisson, 
+                        control = glmerControl(optimizer="bobyqa"), na.action = na.omit)
+PA.Summary.Poisson.Full = summary(PA.Poisson.Full)
+PA.Summary.Poisson.Full
+```
+**Comment**: Fixed-effects were compared to PA counts in the auditory cortex of sensory deprived mice. The results indicate there may be an effect of sensory deprivation on the visual cortex. Use likelihood ratios to test this directly.
+
+##Perform likelihood ratio tests to test main and interaction effects:
+###Test the significance of sex on overall PA counts
+```{r}
+PA.Poisson.Reduced1 = glmer(NumPA ~ 1 + Age_scaled + Treatment + Region  + 
+                              Treatment:Region + Age_scaled:Treatment + (1|Animal) + 
+                              offset(log(Area)), 
+                        data = Data, family = poisson, 
+                        control = glmerControl(optimizer="bobyqa"), na.action = na.omit)
+anova(PA.Poisson.Full, PA.Poisson.Reduced1, test = "Chisq")
+```
+**Comment:** The p-value (p=0.1406) indicated that the model was not significantly improved by inclusion of sex in the model and that sex had no effect on the mean PA counts
+
+###Test the significance of sex on overall PA counts
+```{r}
+PA.Poisson.Reduced2 = glmer(NumPA ~ 1 + Treatment + Region  + Treatment:Region + 
+                              (1|Animal) + offset(log(Area)), 
+                        data = Data, family = poisson, 
+                        control = glmerControl(optimizer="bobyqa"), na.action = na.omit)
+anova(PA.Poisson.Reduced1, PA.Poisson.Reduced2, test = "Chisq")
+```
+**Comment:** The p-value (p=0.2385) indicated that the model was not significantly improved by inclusion of age as a factor in the model and that the age of the mouse did not affect the PA count.
+
+###Test the significance of the effect of sensory deprivation on PA counts within cortical regions
+```{r}
+PA.Poisson.Reduced3 = glmer(NumPA ~ 1 + Treatment + Region + (1|Animal) + 
+                                   offset(log(Area)), data = Data, 
+                                 family = poisson, 
+                                 control = glmerControl(optimizer="bobyqa"), 
+                                 na.action = na.omit)
+anova(PA.Poisson.Reduced2, PA.Poisson.Reduced3, test = "Chisq")
+```
+**Comment**: The p-value (p=0.096) indicated that the model was not significantly improved by including the interaction effects and that the PA counts in cortical regions were not differentially affected by sensory deprivation.
+
+###Test the significance of the effect of sensory deprivation on PA count
+```{r}
+PA.Poisson.Reduced4 = glmer(NumPA ~ 1 + Region + (1|Animal) + offset(log(Area)), 
+                               data = Data, family = poisson, 
+                               control = glmerControl(optimizer="bobyqa"), 
+                               na.action = na.omit)
+PA.Summary.Poisson.Reduced4 = summary(PA.Poisson.Reduced4)
+anova(PA.Poisson.Reduced4, PA.Poisson.Reduced3, test = "Chisq")
+```
+**Comment**: The p-value (p=0.715) indicated that the model was not significantly improved by indluding the overall treatment effects, indicating that the overall PA counts were not affected by sensory deprivation.
+
+###Test the significance of the effect of cortical region on PA count
+```{r}
+PA.Poisson.Reduced5 = glmer(NumPA ~ 1 + (1|Animal) + offset(log(Area)), 
+                         data = Data, family = poisson, 
+                         control = glmerControl(optimizer="bobyqa"), 
+                         na.action = na.omit)
+anova(PA.Poisson.Reduced4, PA.Poisson.Reduced5, test = "Chisq")
+```
+**Comment:** The p-value (p=1.651e-4) indicated that the model was improved by including the cortical region as a factor
+
+###Use Tukey's honest significance difference-test to determine which regions are different in PA counts
+Tukey's HSD evaluated signficance based on a studentized distribution that corrected for multiple comparisons.
+```{r}
+PA.PostHoc.Region = glht(PA.Poisson.Reduced4, mcp(Region = "Tukey"))
+PA.Summary.PostHoc.Region = summary(PA.PostHoc.Region)
+PA.Summary.PostHoc.Region
+
+# Extract the estimates for the significant results
+PA.SigCoef.PostHoc.Region <- 
+  PA.Summary.PostHoc.Region$test$coefficients[PA.Summary.PostHoc.Region$test$pvalues < 0.05]
+
+# Extract the effect size for the signficant results
+PA.SigZ.PostHoc.Region <- 
+  PA.Summary.PostHoc.Region$test$tstat[PA.Summary.PostHoc.Region$test$pvalues < 0.05]
+
+#Get the significant p-values
+PA.SigP.PostHoc.Region <- 
+  PA.Summary.PostHoc.Region$test$pvalues[PA.Summary.PostHoc.Region$test$pvalues < 0.05]
+
+plot(PA.PostHoc.Region, xlab = "Difference in log(mean) of LMA")
+```
+**Comment**: the visual and barrel cortex were different in PA counts although the difference was not drastic (1.22 PA/mm^2)
+
+##Test model assumptions
+```{r}
+# Get the degrees of freedom for the residuals (rdf)
+rdf <- PA.Summary.Poisson.Reduced4$AICtab[[5]]
+
+# Get the studentized residuals of the model
+rp <- residuals(PA.Poisson.Reduced4,type="pearson")
+
+# Calculate the variance of the studentized residuals
+rp_var <- sum(rp^2)
+
+# Show the ratio of error variance, mean
+rat = rp_var/rdf
+
+# Get the probability (pval) that the variance > mean
+pval_over <- pchisq(rp_var, df = rdf, lower.tail = FALSE)
+pval_under <- pchisq(rp_var, df = rdf, lower.tail = TRUE)
+
+# Summarize
+disp_summary = c(Residual_Variance = rp_var, Ratio = rat, df = rdf, 
+                 p_over = pval_over, p_under = pval_under)
+disp_summary
+```
+
+```{r}
+# Calculate the studentized residuals
+Resids = data.frame(Mouse_Number = Data[complete.cases(Data$NumPA),]$Animal, 
+                    Fitted_Value = fitted(PA.Poisson.Reduced4), 
+                    Standardized_Resids = residuals(PA.Poisson.Reduced4, type="pearson"))
+
+# Fit the plot with a line to test whether slope = 0
+Resids.Fitted = lm(Standardized_Resids~Fitted_Value, data = Resids)
+
+# Plot the studentized residual amplitude vs. the fitted value
+plot(PA.Poisson.Reduced4)
+
+# Test the significance of the slope
+anova(Resids.Fitted)
+```
+**Comment**: The ratio $\frac{Var_{error}}{mean_{error}} = \frac{73.54}{85} = 0.984$ was not significantly greater than 1 (p=0.98). This indicated that the model was not overdispersed. However, it was significantly less than 1 (p=0.015, 0.03 [bonferroni corrected]). This indicated that the data are slightly under-dispersed. However, examination of the fitted vs. residual plot indicated that this effect was subtle. 
+
+##Summary of PA count analysis:
+**These models indicated that sensory deprivation had no effect on the number of PAs overall or within any cortical area. The only significant factor in the LMA count was the cortical region.**
+
+#Effect of sensory deprivation on vessel branching structure
+
+Branching structure can be evaluated by the amount of branches (vertices) per vessel. This analysis tested whether sensory deprivation altered the branching structure.
+
+##Plot the distribution of branches per vessel
+```{r}
+ggplot(data = Data, mapping = aes(x=AvgNumVertInBranch)) +
+  geom_histogram(bins = 15, na.rm = TRUE) +
+  theme_bw() + 
+  xlim(0,10) + 
+  labs(title = "Distribution of all branch densities:", x = "Branches per vessel", 
+       y = "Frequency")
+```
+**Comment**: These data were not normal and were continuous. We therefore used a GLIM based on a Gamma-distribution.
+
+##Plot the average number of vertices per branch by region, treatment, and animal
+```{r}
+ggplot(data = Data, mapping = aes(x=Region, y=AvgNumVertInBranch, group = Animal)) +
+  geom_point(na.rm = TRUE) + 
+  geom_line(na.rm = TRUE, mapping = aes(col = Animal)) +
+  facet_wrap(~Treatment, nrow = 1) +
+  labs(title = "Avg # Vertices per branch for each animal:", x = "Cortical region", 
+       y = "Avg # Vertices per branch") +
+  guides(color = FALSE) +
+  theme_bw()
+```
+
+##Model build
+```{r}
+Vert.Gamma.Max = glmer(AvgNumVertInBranch ~ 1 + Treatment*Region + (1|Animal), 
+                        data = Data, family = Gamma, 
+                        control = glmerControl(optimizer="bobyqa"), na.action = na.omit)
+Vert.Summary.Gamma.Max = summary(Vert.Gamma.Max)
+Vert.Summary.Gamma.Max
+```
+**Comment**: The fixed-effects were compared to branches per vessel in auditory cortex of sensory deprived mice. They indicated a possible difference in branching structure between cortical region. Directly tested the fixed-effects using the likelihood ratio test.
+
+##Perform likelihood ratio tests to test main and interaction effects:
+###Test the significance of the effect of sensory deprivation on vertices per branch within cortical regions
+```{r}
+Vert.Gamma.NoInteraction = glmer(AvgNumVertInBranch ~ 1 + Treatment + Region + (1|Animal), 
+                                data = Data, family = Gamma, 
+                                control = glmerControl(optimizer="bobyqa"),
+                                na.action = na.omit)
+anova(Vert.Gamma.Max, Vert.Gamma.NoInteraction, test = "Chisq")
+```
+**Comment**: The p-value (p=0.781) indicated that the model of branching was not significantly improved by including the interaction between sensory deprivation and cortical region and that sensory deprivation did not differentially affect the branching in any cortical area
+
+###Test the significance of the effect of cortical region on vertices per branch
+```{r}
+Vert.Gamma.Treatment = glmer(AvgNumVertInBranch ~ 1 + Treatment + (1|Animal), 
+                               data = Data, family = Gamma, 
+                               control = glmerControl(optimizer="bobyqa"), 
+                               na.action = na.omit)
+Summary.Gamma.Treatment = summary(Vert.Gamma.Treatment)
+anova(Vert.Gamma.NoInteraction, Vert.Gamma.Treatment, test = "Chisq")
+```
+**Comment**: The p-value (p=3.03e-07) indicated that the model was improved by including the cortical region as a factor.
+
+###Test the significance of the treatment on vertices per branch
+```{r}
+Vert.Gamma.Null = glmer(AvgNumVertInBranch ~ 1 + (1|Animal),
+                        data = Data, family = Gamma,
+                        control = glmerControl(optimizer = "bobyqa"),
+                        na.action = na.omit)
+Summary.Gamma.Null = summary(Vert.Gamma.Null)
+anova(Vert.Gamma.Treatment, Vert.Gamma.Null, test = "Chisq")
+```
+**Comment**: The p-value (p=0.173) indicated that the model was not improved by including sensory deprivation as a factor and that sensory deprivation did not alter vessel branching overall.
+
+###Use Tukey's honest significance difference-test to test which regions are different in branches per vessel
+Tukey's HSD evaluates signficance based on a studentized distribution that corrects for multiple comparisons.
+```{r, warning=FALSE}
+Vert.Gamma.Region = glmer(AvgNumVertInBranch ~ 1 + Region + (1|Animal), 
+                              data = Data, family = Gamma, 
+                              control = glmerControl(optimizer="bobyqa"), 
+                              na.action = na.omit)
+Vert.PostHoc.Region = glht(Vert.Gamma.Region, mcp(Region = "Tukey"))
+
+Vert.Summary.PostHoc.Region = summary(Vert.PostHoc.Region)
+Vert.Summary.PostHoc.Region
+
+# Extract the estimates for the significant results
+Vert.SigCoef.PostHoc.Region <- 
+  Vert.Summary.PostHoc.Region$test$coefficients[Vert.Summary.PostHoc.Region$test$pvalues < 0.05]
+
+# Extract the effect size for the signficant results
+Vert.SigZ.PostHoc.Region <- 
+  Vert.Summary.PostHoc.Region$test$tstat[Vert.Summary.PostHoc.Region$test$pvalues < 0.05]
+
+#Get the significant p-values
+Vert.SigP.PostHoc.Region <- 
+  Vert.Summary.PostHoc.Region$test$pvalues[Vert.Summary.PostHoc.Region$test$pvalues < 0.05]
+
+summary(Vert.PostHoc.Region)
+
+plot(Vert.PostHoc.Region, xlab = "Difference in log(mean) of LMA")
+```
+**Comment**: The branching structure in forelimb/hindlimb regions were different from visual, barrel, and auditory cortex.
+
+##Check that error is independent of the fitted value
+```{r}
+# Calculate the studentized residuals
+Resids = data.frame(Mouse_Number = Data[complete.cases(Data$AvgNumVertInBranch),]$Animal, 
+                    Fitted_Value = fitted(Vert.Gamma.Region), 
+                    Standardized_Resids = residuals(Vert.Gamma.Region, type="pearson"))
+
+# Fit the plot with a line to test whether slope = 0
+Resids.Fitted = lm(Standardized_Resids~Fitted_Value, data = Resids)
+
+# Plot the studentized residual amplitude vs. the fitted value
+plot(Vert.Gamma.Region)
+
+# Test the significance of the slope
+anova(Resids.Fitted)
+```
+**Comment**: There was no significant slope between the fitted values and residuals, indicating the the Gamma-distribution appropriately captured the mean-variance structure.
+
+##Summary of the analysis of branching structure:
+**These models indicate that sensory deprivation had no effect on the overall branching structure or the branching structure within any cortical area. The only significant factor in the LMA count was the cortical region.**
+
+# Summary Table
+```{r xtable, result = 'asis'}
+# Gather data for table
+TabData <- tibble(
+  Measurement = c(rep("LMACount",length(LMA.SigCoef.PostHoc.Region)),
+            rep("PACount",length(PA.SigCoef.PostHoc.Region)),
+            rep("BranchPerVessel",length(Vert.SigCoef.PostHoc.Region))),
+  RegionComparison = c(names(LMA.SigCoef.PostHoc.Region),
+                 names(PA.SigCoef.PostHoc.Region),
+                 names(Vert.SigCoef.PostHoc.Region)),
+  Difference = c(exp(LMA.SigCoef.PostHoc.Region),
+                 exp(PA.SigCoef.PostHoc.Region),
+                 exp(Vert.SigCoef.PostHoc.Region)),
+  EffectSize = c(LMA.SigZ.PostHoc.Region,
+                 PA.SigZ.PostHoc.Region,
+                 Vert.SigZ.PostHoc.Region),
+  PValue = c(LMA.SigP.PostHoc.Region,
+           PA.SigP.PostHoc.Region,
+           Vert.SigP.PostHoc.Region)
+  )
+kable(TabData)
+```
+
