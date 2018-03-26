@@ -56,6 +56,11 @@ where $\gamma_4$ was the fixed-effect of the cortical region, and $\gamma_5$ was
 
 (@GLM8) $$log(C) = \gamma_1 S + \alpha_0 Y + \alpha_1(Y*S) + \gamma_3 G + \gamma_4 R + \gamma_5 (S*R) + u_1M + log(A) + \epsilon$$
 
+#Instructions for replicating the results
+
+The code blocks below contain commands in the "R" scripting language. To replicate the reported results the contents of the code blocks can be copied and pasted into the R-command line or the entire contents of the .rmd document can be loaded into R-Studio and run.
+
+In order to run the code, the "tidyverse", "lme4", "multcomp", and "knitr" packages must be installed into R.
 
 #Setup
 ##Load Packages
@@ -69,7 +74,10 @@ library(knitr) # for publication of markdown
 ##Load Data
 ```{r}
 BranchData = read.table("../Data/OFFSHOOT_29Sep2017_004858.txt", header=T, sep="\t")
+head(BranchData)
+
 PAData = read.table("../Data/LMA_PA_Data_Appended.txt", header = T, sep = "\t")
+head(PAData)
 ```
 
 ##Clean Data
@@ -122,6 +130,24 @@ Data.Figs.Complete = Data.Figs[complete.cases(Data.Figs),] %>%
   mutate(PADensity = NumPA/Area)
 ```
 
+##Compare the area of the cytochrome-oxidase stained regions between the sham and plucked conditions
+###Plot
+```{r}
+ggplot(data = Data, mapping = aes(x = Treatment, y = Area)) +
+  geom_point(na.rm = TRUE) +
+  facet_wrap(~Region, nrow = 2) +
+  labs(title = "Area of cortical regions compared between treatment conditions", 
+       x = "Treatment", y = "Area of cytochrome oxidase stain") +
+  theme_bw()
+```
+
+### Test for differences in areas among treatments
+```{r}
+AreaModel.Full = lm(data = Data, Area ~ Region*Treatment, na.action = na.omit)
+summary(AreaModel.Full)
+```
+**Comment:** The linear model indicates that the only factor affecting the size of the cytochrome stained area is the identity of the cortical region. There was not an effect of treatment on the area overall, or for any individual region (p > 0.05).
+
 ##Plot the number of LMAs vs. PAs
 ```{r, result = 'asis'}
 # Fit the points
@@ -166,7 +192,6 @@ ggplot(data = Data.Figs.Complete, mapping = aes(x = PADensity, y = LMADensity, c
   theme_bw()
 ggsave("NumPAvsNumLMA.eps")
 ```
-
 
 # Effect of sensory deprivation on LMA count
 **Hypothesis**: Sensory deprivation (whisker plucking) alters the number LMA within individual cortical regions
