@@ -84,7 +84,7 @@ head(PAData)
 ```{r}
 # Recode the area variable
 BranchClean <- BranchData %>%
-  mutate(Area = recode(Area, AUD = "A", BF = "BF", FORE = "FP", HIND = "HP", VIS = "V"))
+  mutate(Area = recode(Area, AUD = "A", BF = "BF", FORE = "FL", HIND = "HL", VIS = "V"))
 
 # Rename fieldnames of the data frames to match
 colnames(BranchClean) <- c("Animal","Treatment","Region","nBranches","fractionOfBranches",
@@ -96,8 +96,8 @@ colnames(BranchClean) <- c("Animal","Treatment","Region","nBranches","fractionOf
 PAClean <- PAData %>%
   mutate(NumLMA = as.numeric(levels(NumLMA)[NumLMA])) %>%
   mutate(NumPA = as.numeric(levels(NumPA)[NumPA])) %>%
-  mutate(Region = recode(Region, Auditory = "A", Barrels = "BF", Forepaw = "FP",
-                       Hindpaw = "HP", Visual = "V"))
+  mutate(Region = recode(Region, Auditory = "A", Barrels = "BF", Forepaw = "FL",
+                       Hindpaw = "HL", Visual = "V"))
 
 # Merge the two data frames, Entries in PAData without a corresponding entry 
 # in BranchClean will be entered as NaN
@@ -118,7 +118,7 @@ Data <- Data %>%
   mutate(Age_scaled = scale(Age, center = T, scale = T))
 
 # Clean data for figures
-Data.Figs.RegionFilt <- dplyr::filter(Data, Region == "BF" | Region == "FP" | Region == "HP")
+Data.Figs.RegionFilt <- dplyr::filter(Data, Region == "BF" | Region == "FL" | Region == "HL")
 Data.Figs.Num <- mutate(aggregate(cbind(NumLMA, NumPA, Area) ~ Animal, 
                                   data = Data.Figs.RegionFilt, sum, na.action = na.pass))
 Data.Figs.Fctrs <- dplyr::filter(Data.Figs.RegionFilt, Region == "BF") %>%
@@ -186,7 +186,7 @@ ggplot(data = Data.Figs.Complete, mapping = aes(x = PADensity, y = LMADensity, c
   geom_line(Data.Figs.Sham, mapping = aes(x = PADensity, y = fitted(LMA.Model.PA.Sham)), 
             color = "blue", size = 1) +
   labs(x = "PA Density (PA/mm^2)", y = "LMA Density (LMA/mm^2)", 
-       title = "Density of PAs and LMAs in the BF, FP, HP") +
+       title = "Density of PAs and LMAs in the BF, FL, HL") +
   xlim(10,30) +
   ylim(0,3) +
   theme_bw()
@@ -635,25 +635,25 @@ anova(Resids.Fitted)
 
 Branching structure can be evaluated by the amount of branches (vertices) per vessel. This analysis tested whether sensory deprivation altered the branching structure.
 
-##Plot the distribution of branches per vessel
+##Plot the distribution offshoots per vessel
 ```{r}
 ggplot(data = Data, mapping = aes(x=AvgNumVertInBranch)) +
   geom_histogram(bins = 15, na.rm = TRUE) +
   theme_bw() + 
   xlim(0,10) + 
-  labs(title = "Distribution of all branch densities:", x = "Branches per vessel", 
+  labs(title = "Distribution of all branch densities:", x = "Vertices per offshoot", 
        y = "Frequency")
 ```
 **Comment**: These data were not normal and were continuous. We therefore used a GLM based on a Gamma-distribution.
 
-##Plot the average number of vertices per branch by region, treatment, and animal
+##Plot the average number of vertices per offshoot by region, treatment, and animal
 ```{r}
 ggplot(data = Data, mapping = aes(x=Region, y=AvgNumVertInBranch, group = Animal)) +
   geom_point(na.rm = TRUE) + 
   geom_line(na.rm = TRUE, mapping = aes(col = Animal)) +
   facet_wrap(~Treatment, nrow = 1) +
-  labs(title = "Avg # Vertices per branch for each animal:", x = "Cortical region", 
-       y = "Avg # Vertices per branch") +
+  labs(title = "Avg # Vertices per offshoot for each animal:", x = "Cortical region", 
+       y = "Avg # Vertices per offshoot") +
   guides(color = FALSE) +
   theme_bw()
 ```
@@ -669,7 +669,7 @@ Vert.Summary.Gamma.Max
 **Comment**: The fixed-effects were compared to branches per vessel in auditory cortex of sensory deprived mice. They indicated a possible difference in branching structure between cortical region. Directly tested the fixed-effects using the likelihood ratio test.
 
 ##Perform likelihood ratio tests to test main and interaction effects:
-###Test the significance of the effect of sensory deprivation on vertices per branch within cortical regions
+###Test the significance of the effect of sensory deprivation on vertices per offshoot within cortical regions
 ```{r}
 Vert.Gamma.NoInteraction = glmer(AvgNumVertInBranch ~ 1 + Treatment + Region + (1|Animal), 
                                 data = Data, family = Gamma, 
@@ -679,7 +679,7 @@ anova(Vert.Gamma.Max, Vert.Gamma.NoInteraction, test = "Chisq")
 ```
 **Comment**: The p-value (p=0.781) indicated that the model of branching was not significantly improved by including the interaction between sensory deprivation and cortical region and that sensory deprivation did not differentially affect the branching in any cortical area
 
-###Test the significance of the effect of cortical region on vertices per branch
+###Test the significance of the effect of cortical region on vertices per offshoot
 ```{r}
 Vert.Gamma.Treatment = glmer(AvgNumVertInBranch ~ 1 + Treatment + (1|Animal), 
                                data = Data, family = Gamma, 
@@ -690,7 +690,7 @@ anova(Vert.Gamma.NoInteraction, Vert.Gamma.Treatment, test = "Chisq")
 ```
 **Comment**: The p-value (p=3.03e-07) indicated that the model was improved by including the cortical region as a factor.
 
-###Test the significance of the treatment on vertices per branch
+###Test the significance of the treatment on vertices per offshoot
 ```{r}
 Vert.Gamma.Null = glmer(AvgNumVertInBranch ~ 1 + (1|Animal),
                         data = Data, family = Gamma,
